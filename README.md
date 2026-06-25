@@ -40,8 +40,8 @@ reward(block_height) = R × e^(-k × block_height)
 
   ```yaml
   File:    bitcoin.cpp / util.cpp
-  Change:  Display alias: satoshi → cent at 10⁻²
-           Internal precision unchanged at 10⁻⁸
+  Change:  Display alias: cent at 10⁻²
+           satoshis internal precision unchanged at 10⁻⁸
   Difficulty: trivial
   ```
 
