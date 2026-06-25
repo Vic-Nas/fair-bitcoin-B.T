@@ -1,79 +1,149 @@
-Bitcoin Core integration/staging tree
-=====================================
+# Smooth Bitcoin T.H.S. (SBTC)
 
-https://bitcoincore.org
+## Parameters (user set at fork)
 
-For an immediately usable, binary version of the Bitcoin Core software, see
-https://bitcoincore.org/en/download/.
+| Parameter | Description | Default |
+| --- | --- | --- |
+| `S` | Total supply in billions | `1` |
+| `H` | % of supply emitted in first T years | `50` |
+| `T` | Emission period in years | `4` |
 
-What is Bitcoin Core?
----------------------
+## Derived at Startup (cached, never recomputed)
 
-Bitcoin Core connects to the Bitcoin peer-to-peer network to download and fully
-validate blocks and transactions. It also includes a wallet and graphical user
-interface, which can be optionally built.
+```toml
+blocks_per_year = 52,596
+N = T × blocks_per_year
+k = -ln(1 - H/100) / N
+R = k × S × 10⁹
+```
 
-Further information about Bitcoin Core is available in the [doc folder](/doc).
+## Emission Formula
 
-License
--------
+```toml
+reward(block_height) = R × e^(-k × block_height)
+```
 
-Bitcoin Core is released under the terms of the MIT license. See [COPYING](COPYING) for more
-information or see https://opensource.org/license/MIT.
+---
 
-Development Process
--------------------
+## Implementation Steps
 
-The `master` branch is regularly built (see `doc/build-*.md` for instructions) and tested, but it is not guaranteed to be
-completely stable. [Tags](https://github.com/bitcoin/bitcoin/tags) are created
-regularly from release branches to indicate new official, stable release versions of Bitcoin Core.
+- [ ] **Step 1 — Identity**
 
-The https://github.com/bitcoin-core/gui repository is used exclusively for the
-development of the GUI. Its master branch is identical in all monotree
-repositories. Release branches and tags do not exist, so please do not fork
-that repository unless it is for development reasons.
+  ```yaml
+  File:    chainparams.cpp
+  Change:  Address prefix bc1 → sbc1
+  Touches: bech32 prefix string
+  Difficulty: trivial
+  ```
 
-The contribution workflow is described in [CONTRIBUTING.md](CONTRIBUTING.md)
-and useful hints for developers can be found in [doc/developer-notes.md](doc/developer-notes.md).
+- [ ] **Step 2 — Display Unit**
 
-Testing
--------
+  ```yaml
+  File:    bitcoin.cpp / util.cpp
+  Change:  Display alias: satoshi → cent at 10⁻²
+           Internal precision unchanged at 10⁻⁸
+  Difficulty: trivial
+  ```
 
-Testing and code review is the bottleneck for development; we get more pull
-requests than we can review and test on short notice. Please be patient and help out by testing
-other people's pull requests, and remember this is a security-critical project where any mistake might cost people
-lots of money.
+- [ ] **Step 3 — Supply**
 
-### Automated Testing
+  ```yaml
+  File:    consensus/params.h
+  Change:  MAX_MONEY from 21,000,000 to S × 10⁹
+  Difficulty: trivial
+  ```
 
-Developers are strongly encouraged to write [unit tests](src/test/README.md) for new code, and to
-submit new unit tests for old code. Unit tests can be compiled and run
-(assuming they weren't disabled during the generation of the build system) with: `ctest`. Further details on running
-and extending unit tests can be found in [/src/test/README.md](/src/test/README.md).
+- [ ] **Step 4 — Fixed Fee Rate**
 
-There are also [regression and integration tests](/test), written
-in Python.
-These tests can be run (if the [test dependencies](/test) are installed) with: `build/test/functional/test_runner.py`
-(assuming `build` is your build directory).
+  ```yaml
+  File:    validation.cpp / policy/fees.cpp
+  Change:  Remove fee market and mempool fee estimation
+           Enforce fixed rate per byte
+           100% of fees go to miner (lock it)
+  Difficulty: low
+  ```
 
-The CI (Continuous Integration) systems make sure that every pull request is tested on Windows, Linux, and macOS.
-The CI must pass on all commits before merge to avoid unrelated CI failures on new pull requests.
+- [ ] **Step 5 — Emission Curve**
 
-### Manual Quality Assurance (QA) Testing
+  ```yaml
+  File:    validation.cpp
+  Remove:  50 × (1/2)^(block_height/210000)
+  Replace: R × e^(-k × block_height)
+           Compute and cache k, R at startup from S, H, T
+  Difficulty: low
+  ```
 
-Changes should be tested by somebody other than the developer who wrote the
-code. This is especially important for large or high-risk changes. It is useful
-to add a test plan to the pull request description if testing the changes is
-not straightforward.
+- [ ] **Step 6 — Mempool Fair Queuing**
 
-Translations
-------------
+  ```yaml
+  File:    txmempool.cpp / txmempool.h
+  Change:  Remove fee priority ordering
+           Implement fair queuing by sender address:
+             - track per-address queue depth
+             - fewer queued = higher priority
+             - FIFO preserved within each address queue
+  Difficulty: medium
+  ```
 
-Changes to translations as well as new translations can be submitted to
-[Bitcoin Core's Transifex page](https://explore.transifex.com/bitcoin/bitcoin/).
+- [ ] **Step 7 — Strict Miner Ordering**
 
-Translations are periodically pulled from Transifex and merged into the git repository. See the
-[translation process](doc/translation_process.md) for details on how this works.
+  ```yaml
+  File:    miner.cpp
+  Change:  Enforce block transaction order matches
+           fair queue order exactly
+           Reject blocks where miner deviated
+  Difficulty: medium
+  ```
 
-**Important**: We do not accept translation changes as GitHub pull requests because the next
-pull from Transifex would automatically overwrite them again.
+- [ ] **Step 8 — Stealth Addresses**
+
+  ```yaml
+  Files:   script/standard.cpp, keystore.cpp
+  Change:  Receiver-side stealth addresses:
+             - sender derives one-time address from
+               recipient's published meta-address
+             - recipient scans chain to identify own UTXOs
+           Does not affect sender address visibility
+           Does not affect fair queuing (sender-side)
+  Difficulty: hard
+  ```
+
+- [ ] **Step 9 — Genesis Block**
+
+  ```yaml
+  File:    chainparams.cpp
+  Message: "2026: Same rules for every transaction,
+            every address, every person."
+  Action:  Set genesis timestamp
+           Compute new genesis hash
+           All previous steps must be complete and stable
+  Difficulty: hard (finalizes the chain, irreversible)
+  ```
+
+---
+
+## Dependency Order
+
+```yaml
+Steps 1-5: independent, any order
+Step 6:    must precede step 7
+Step 8:    independent, anytime before step 9
+Step 9:    must be last
+```
+
+---
+
+## What Stays Identical to Bitcoin Core
+
+```yaml
+SHA-256 proof of work
+UTXO model
+Block time (10 minutes)
+Block size (1MB)
+Difficulty adjustment formula
+P2P network protocol
+Block structure
+Wallet structure
+Multisig
+Lightning compatibility (HTLC attack mitigated by fixed fee economics)
+```
